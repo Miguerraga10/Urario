@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generador de Horarios - Web</title>
+  <style>
+    body{font-family: Arial, sans-serif; background:#121212;color:#eee;padding:16px}
+    .container{max-width:1100px;margin:0 auto}
+    button{padding:8px 12px;margin:4px}
+    textarea{width:100%;height:120px}
+    .flex{display:flex;gap:8px}
+    .left{flex:1}
+    .right{width:320px}
+    .list{background:#1e1e1e;padding:8px;border-radius:6px;max-height:400px;overflow:auto}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #333;padding:6px}
+    .badge{background:#00b3ff;color:#000;padding:2px 6px;border-radius:4px}
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Generador de Horarios (Web)</h1>
+  <div class="flex">
+    <div class="left">
+      <div>
+        <button id="btn_universidad">Universidad: UNAL</button>
+        <button id="btn_abrir_manual">Añadir manualmente</button>
+        <label><input type="checkbox" id="chk_colores" checked> Usar colores</label>
+        <label><input type="checkbox" id="chk_cupos" checked> Verificar cupos</label>
+        <label><input type="checkbox" id="chk_virtual" checked> Materias virtuales</label>
+      </div>
+
+      <h3>Materias</h3>
+      <div class="list" id="lista_materias"></div>
+      <div>
+        <button id="btn_clear">Eliminar Todos</button>
+        <button id="btn_generate">Generar Horario</button>
+        <button id="btn_historial">Pegar Historial Académico</button>
+      </div>
+      <h3>Intervalos libres</h3>
+      <div id="horas_libres" class="list"></div>
+      <div>
+        <button id="btn_add_hora">Añadir intervalo</button>
+        <button id="btn_clear_horas">Eliminar todos</button>
+      </div>
+    </div>
+    <div class="right">
+      <h3>Parámetros</h3>
+      <label>Materias (min - max): <input id="min_materias" value="1" size="3"> - <input id="max_materias" value="10" size="3"></label><br>
+      <label>Créditos (min - max): <input id="min_creditos" value="1" size="3"> - <input id="max_creditos" value="30" size="3"></label><br>
+      <label>Horas (desde - hasta): <input id="min_horas" value="08:00" size="6"> - <input id="max_horas" value="20:00" size="6"></label><br>
+      <label>Días (max): <input id="max_dias" value="5" size="3"></label>
+      <h4>Carrera</h4>
+      <input id="input_carrera" placeholder="Nombre de la carrera (ej: Ingeniería de Sistemas)" style="width:100%"><br>
+      <button id="btn_cargar_posibles">Cargar materias posibles</button>
+      <h3>Resultado</h3>
+      <div id="resultado"></div>
+    </div>
+  </div>
+  <!-- Modal simple -->
+  <div id="modal" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.6);align-items:center;justify-content:center">
+    <div style="background:#222;padding:16px;border-radius:8px;max-width:800px;width:90%">
+      <h3 id="modal_title">Modal</h3>
+      <textarea id="modal_text"></textarea>
+      <div style="text-align:right"><button id="modal_ok">Añadir Materia</button><button id="modal_cancel">Cerrar</button></div>
+    </div>
+  </div>
+</div>
+<script>
+const api = (path, opts)=>fetch(path, opts).then(r=>r.json());
+let universidad='UNAL';
+document.getElementById('btn_universidad').onclick=()=>{ universidad = universidad==='UNAL'?'UdeA':'UNAL'; document.getElementById('btn_universidad').innerText='Universidad: '+universidad };
+
+const isLocal = location.protocol === 'file:';
+function saveLocalMaterias(list){ localStorage.setItem('materias_local', JSON.stringify(list)) }
+function loadLocalMaterias(){ try{ return JSON.parse(localStorage.getItem('materias_local')||'[]') }catch(e){ return [] } }
+
+async function loadMaterias(){
+  const container = document.getElementById('lista_materias'); container.innerHTML='';
+  if(isLocal){
+    const res = loadLocalMaterias();
+    for(const m of res){
+      const el = document.createElement('div'); el.innerHTML=`<b>${m.nombre}</b> - ${m.creditos || ''} créditos <span class="badge">${m.facultad||''}</span>`;
+      container.appendChild(el);
+    }
+    return;
+  }
+  try{
+    const res = await api('/api/materias');
+    for(const m of res){
+      const el = document.createElement('div'); el.innerHTML=`<b>${m.nombre}</b> - ${m.creditos || ''} créditos <span class="badge">${m.facultad||''}</span>`;
+      container.appendChild(el);
+    }
+  }catch(e){
+    // Si falla, caer a modo local
+    const res = loadLocalMaterias();
+    for(const m of res){
+      const el = document.createElement('div'); el.innerHTML=`<b>${m.nombre}</b> - ${m.creditos || ''} créditos <span class="badge">${m.facultad||''}</span>`;
+      container.appendChild(el);
+    }
+  }
+}
+loadMaterias();
+document.getElementById('btn_abrir_manual').onclick=()=>{ document.getElementById('modal').style.display='flex'; document.getElementById('modal_title').innerText='Añadir Materia Manualmente'; document.getElementById('modal_text').value=''; }
+document.getElementById('modal_cancel').onclick=()=>document.getElementById('modal').style.display='none';
+document.getElementById('modal_ok').onclick=async ()=>{
+  const texto = document.getElementById('modal_text').value;
+  if(isLocal){
+    // Extraer información mínima y guardar en localStorage
+    // Intentamos parse simple: primera línea nombre, créditos si aparece
+    const lines = texto.split('\n').map(s=>s.trim()).filter(Boolean);
+    const nombre = lines[0] || 'Materia manual';
+    let creditos = 0;
+    for(const ln of lines){ const m = ln.match(/(\d+)\s*cr/i); if(m){ creditos = parseInt(m[1]); break } }
+    const lista = loadLocalMaterias();
+    lista.push({nombre, creditos, facultad: ''});
+    saveLocalMaterias(lista);
+    alert('Materia añadida localmente');
+    loadMaterias();
+    document.getElementById('modal').style.display='none';
+    return;
+  }
+  try{
+    const resp = await fetch('/api/materias/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texto,obligatoria:true,universidad})});
+    const j = await resp.json(); if(j.success){ alert('Materia añadida'); loadMaterias(); document.getElementById('modal').style.display='none' } else { alert('Error: '+(j.error||'desconocido')) }
+  }catch(e){
+    alert('Error conectando con el servidor. En modo local use añadir manual para guardar en localStorage.');
+  }
+}
+document.getElementById('btn_generate').onclick=async ()=>{
+  const intervalos = {
+    min_materias: parseInt(document.getElementById('min_materias').value||1),
+    max_materias: parseInt(document.getElementById('max_materias').value||10),
+    min_creditos: parseInt(document.getElementById('min_creditos').value||1),
+    max_creditos: parseInt(document.getElementById('max_creditos').value||30),
+    min_horas: document.getElementById('min_horas').value||'08:00',
+    max_horas: document.getElementById('max_horas').value||'20:00',
+    max_dias: parseInt(document.getElementById('max_dias').value||5),
+    usar_cupos: document.getElementById('chk_cupos').checked,
+    usar_virtuales: document.getElementById('chk_virtual').checked,
+    horas_libres: []
+  };
+  if(isLocal){
+    alert('No hay backend disponible cuando se abre el HTML localmente. La generación de horarios requiere el servidor.\nEn modo local las materias se guardan en localStorage y NO se envían al servidor.');
+    return;
+  }
+  const res = await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intervalos})});
+  const j = await res.json();
+  if(!j.success){ document.getElementById('resultado').innerText='Error: '+(j.error||''); return }
+  // Mostrar grid simple
+  const horario = j.horario;
+  let html = '<table><thead><tr><th>Hora</th>';
+  const dias = ['LUNES','MARTES','MIÉRCOLES','JUEVES','VIERNES','SÁBADO','DOMINGO'];
+  for(const d of dias) html += `<th>${d}</th>`;
+  html += '</tr></thead><tbody>';
+  // iterate hours 00:00..23:00
+  for(let h=0;h<24;h++){
+    const hh = (h<10? '0'+h : ''+h)+':00';
+    html += `<tr><td>${hh}</td>`;
+    for(const d of dias){ html += `<td>${(horario[d] && horario[d][hh])? horario[d][hh] : ''}</td>` }
+    html += '</tr>'
+  }
+  html += '</tbody></table>';
+  document.getElementById('resultado').innerHTML = html;
+}
+document.getElementById('btn_clear').onclick=async ()=>{
+  if(isLocal){
+    if(!confirm('Eliminar todas las materias locales?')) return;
+    saveLocalMaterias([]);
+    loadMaterias();
+    return;
+  }
+  if(!confirm('Eliminar todas las materias en la base de datos?')) return;
+  await fetch('/api/materias/clear',{method:'POST'}).catch(()=>{});
+  loadMaterias();
+}
+// Simple add/clear horas libres (no persist for now)
+let horas_libres = [];
+function renderHoras(){ const el=document.getElementById('horas_libres'); el.innerHTML=''; horas_libres.forEach((h,i)=>{ const d=document.createElement('div'); d.innerText=`${h.inicio} - ${h.fin} (${h.dias.join(',')})`; el.appendChild(d) }) }
+document.getElementById('btn_add_hora').onclick=()=>{ const inicio=prompt('Hora inicio (HH:MM)'); if(!inicio) return; const fin=prompt('Hora fin (HH:MM)'); if(!fin) return; const dias = prompt('Días (coma separado, ej: Lunes,Martes)') || ''; horas_libres.push({inicio,fin,dias:dias.split(',').map(s=>s.trim())}); renderHoras(); }
+document.getElementById('btn_clear_horas').onclick=()=>{ if(confirm('Eliminar todos los intervalos?')){ horas_libres=[]; renderHoras() } }
+
+// Materias vistas (local per-user storage)
+function saveMateriasVistas(list){ localStorage.setItem('materias_vistas', JSON.stringify(list)) }
+function loadMateriasVistas(){ try{ return JSON.parse(localStorage.getItem('materias_vistas')||'[]') }catch(e){ return [] } }
+// Pegar historial: en navegador pedimos input y guardamos en localStorage
+document.getElementById('btn_historial').onclick=()=>{
+  const texto = prompt('Pega aquí tu historial académico (texto):');
+  if(!texto) return;
+  // Enviar al backend para extraer aprobadas o usar extracción simple en frontend
+  // Para simplicidad, extraemos con endpoint existentes en backend? Aquí solo guardamos en local
+  // El backend Revisa_Materias.materias_posibles_desde_historial es usado por APIs; frontend almacenará el texto para su uso.
+  // Extraer líneas con patrón básico: buscar códigos con formato 'XXXX - Nombre'
+  const lines = texto.split('\n');
+  const aprobadas = [];
+  for(const ln of lines){ const m = ln.match(/(\d+-?\w*)\s*-\s*(.+)/); if(m) aprobadas.push(m[1]+' - '+m[2]); }
+  saveMateriasVistas(aprobadas);
+  alert('Materias vistas guardadas en localStorage.');
+}
+
+// Cargar posibles materias para una carrera usando materias_vistas
+document.getElementById('btn_cargar_posibles').onclick=async ()=>{
+  const carrera = document.getElementById('input_carrera').value.trim();
+  if(!carrera){ alert('Ingresa el nombre de la carrera'); return }
+  const materias_vistas = loadMateriasVistas();
+  if(isLocal){
+    alert('No hay backend disponible en modo local para obtener materias posibles. Usa una instancia del servidor o despliega la app.');
+    return;
+  }
+  const resp = await fetch('/api/posibles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({carrera,materias_vistas})});
+  const j = await resp.json();
+  if(!j.success){ alert('Error: '+(j.error||'')); return }
+  // Mostrar resultados breves
+  const posibles = j.posibles || [];
+  const cont = document.getElementById('lista_materias'); cont.innerHTML='';
+  for(const p of posibles){ const el = document.createElement('div'); el.innerHTML = `<b>${p.nombre}</b> - ${p.creditos || ''} créditos`; cont.appendChild(el) }
+}
+
+// Endpoint to clear materias (fetch)
+fetch('/api/materias').catch(()=>{});
+</script>
+</body>
+</html>
