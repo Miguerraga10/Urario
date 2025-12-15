@@ -1,0 +1,20 @@
+[
+  {
+    "inicio": "08:00",
+    "fin": "10:00",
+    "dias": [
+      "Martes",
+      "Miércoles",
+      "Jueves",
+      "Viernes",
+      "Sábado"
+    ]
+  },
+  {
+    "inicio": "10:00",
+    "fin": "12:00",
+    "dias": [
+      "Viernes"
+    ]
+  }
+]
