@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: gen-horario-web
+    env: python
+    branch: main
+    region: oregon
+    buildCommand: pip install -r web_app/requirements.txt
+    startCommand: gunicorn -w 4 web_app.app:app
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: MONGO_URI
+        value: ""
+      - key: PYTHONUNBUFFERED
+        value: "1"
